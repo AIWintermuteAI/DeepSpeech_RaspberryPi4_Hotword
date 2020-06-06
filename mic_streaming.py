@@ -17,6 +17,7 @@ from halo import Halo
 import time, logging
 import argparse
 import os
+import glob
 import struct
 import sys
 from datetime import datetime
@@ -28,12 +29,13 @@ import numpy as np
 import pyaudio
 import soundfile
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'binding/python'))
-sys.path.append(os.path.join(os.path.dirname(__file__), 'resources/util/python'))
+#sys.path.append(os.path.join(os.path.dirname(__file__), 'binding/python'))
+#sys.path.append(os.path.join(os.path.dirname(__file__), 'resources/util/python'))
 
-from porcupine import Porcupine
-from util import *
+from pvporcupine import * #Porcupine
+#from util import *
 
+logging.basicConfig(level=logging.INFO)
 
 class PorcupineDemo(Thread):
     """
@@ -79,13 +81,17 @@ class PorcupineDemo(Thread):
             
         #Load DeepSpeech model
         print('Initializing model...')
-        logging.info("Model: %s", 'output_graph.tflite')
-        self.model = deepspeech.Model('output_graph.tflite', 500)
-        self.model.enableDecoderWithLM('lm.binary', 'trie', 0.75, 1.85)
+        dirname = os.path.dirname(os.path.abspath(__file__))
+        model_name = glob.glob(os.path.join(dirname,'*.tflite'))[0]
+        scorer_name = glob.glob(os.path.join(dirname,'*.scorer'))[0]
+        logging.info("Model: %s", model_name)
+        logging.info("Language model: %s", scorer_name)
+        self.model = deepspeech.Model(model_name)
+        self.model.enableExternalScorer(scorer_name)
         
     def transcribe(self):
         # Start audio with VAD
-        vad_audio = VADAudio(aggressiveness=3,
+        vad_audio = VADAudio(aggressiveness=1,
                              device=None,
                              input_rate=16000,
                              file=None)
@@ -100,7 +106,7 @@ class PorcupineDemo(Thread):
             if frame is not None:
                 if spinner: spinner.start()
                 logging.debug("streaming frame")
-                self.model.feedAudioContent(stream_context, np.frombuffer(frame, np.int16))
+                stream_context.feedAudioContent(np.frombuffer(frame, np.int16))
                 #if ARGS.savewav: wav_data.extend(frame)
             else:
                 if spinner: spinner.stop()
@@ -108,7 +114,7 @@ class PorcupineDemo(Thread):
                 #if ARGS.savewav:
                 #    vad_audio.write_wav(os.path.join(ARGS.savewav, datetime.now().strftime("savewav_%Y-%m-%d_%H-%M-%S_%f.wav")), wav_data)
                 #    wav_data = bytearray()
-                text = self.model.finishStream(stream_context)
+                text = stream_context.finishStream()
                 print("Recognized: %s" % text)
                 if 'stop recording' in text:
                     vad_audio.destroy()
