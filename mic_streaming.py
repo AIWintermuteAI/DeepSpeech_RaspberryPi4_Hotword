@@ -47,8 +47,8 @@ class PorcupineDemo(Thread):
     def __init__(
             self,
             library_path,
-            model_file_path,
-            keyword_file_paths,
+            model_path,
+            keyword_paths,
             sensitivities,
             input_device_index=None,
             output_path=None):
@@ -70,8 +70,8 @@ class PorcupineDemo(Thread):
         super(PorcupineDemo, self).__init__()
 
         self._library_path = library_path
-        self._model_file_path = model_file_path
-        self._keyword_file_paths = keyword_file_paths
+        self._model_path = model_path
+        self._keyword_paths = keyword_paths
         self._sensitivities = sensitivities
         self._input_device_index = input_device_index
 
@@ -83,12 +83,15 @@ class PorcupineDemo(Thread):
         print('Initializing model...')
         dirname = os.path.dirname(os.path.abspath(__file__))
         model_name = glob.glob(os.path.join(dirname,'*.tflite'))[0]
-        scorer_name = glob.glob(os.path.join(dirname,'*.scorer'))[0]
         logging.info("Model: %s", model_name)
-        logging.info("Language model: %s", scorer_name)
         self.model = deepspeech.Model(model_name)
-        self.model.enableExternalScorer(scorer_name)
-        
+        try:
+            scorer_name = glob.glob(os.path.join(dirname,'*.scorer'))[0]
+            logging.info("Language model: %s", scorer_name)
+            self.model.enableExternalScorer(scorer_name)
+        except Exception as e:
+            pass        
+
     def transcribe(self):
         # Start audio with VAD
         vad_audio = VADAudio(aggressiveness=1,
@@ -129,15 +132,15 @@ class PorcupineDemo(Thread):
          wake word.
          """
 
-        num_keywords = len(self._keyword_file_paths)
+        num_keywords = len(self._keyword_paths)
 
-        keyword_names = list()
-        for x in self._keyword_file_paths:
-            keyword_names.append(os.path.basename(x).replace('.ppn', '').replace('_compressed', '').split('_')[0])
+        keywords = list()
+        for x in self._keyword_paths:
+            keywords.append(os.path.basename(x).replace('.ppn', '').replace('_compressed', '').split('_')[0])
 
         print('listening for:')
-        for keyword_name, sensitivity in zip(keyword_names, self._sensitivities):
-            print('- %s (sensitivity: %f)' % (keyword_name, sensitivity))
+        for keyword, sensitivity in zip(keywords, self._sensitivities):
+            print('- %s (sensitivity: %f)' % (keyword, sensitivity))
 
         porcupine = None
         pa = None
@@ -145,8 +148,8 @@ class PorcupineDemo(Thread):
         try:
             porcupine = Porcupine(
                 library_path=self._library_path,
-                model_file_path=self._model_file_path,
-                keyword_file_paths=self._keyword_file_paths,
+                model_path=self._model_path,
+                keyword_paths=self._keyword_paths,
                 sensitivities=self._sensitivities)
 
             pa = pyaudio.PyAudio()
@@ -167,8 +170,9 @@ class PorcupineDemo(Thread):
                     self._recorded_frames.append(pcm)
 
                 result = porcupine.process(pcm)
-                if num_keywords == 1 and result:
-                    print('[%s] detected keyword' % str(datetime.now()))
+
+                if result >= 0:
+                    print('[%s] Detected %s' % (str(datetime.now()), keywords[result]))
                     audio_stream.close()
                     if self.transcribe():
                                     audio_stream = pa.open(
@@ -178,8 +182,6 @@ class PorcupineDemo(Thread):
                                     input=True,
                                     frames_per_buffer=porcupine.frame_length,
                                     input_device_index=self._input_device_index)
-                elif num_keywords > 1 and result >= 0:
-                    print('[%s] detected %s' % (str(datetime.now()), keyword_names[result]))
 
         except KeyboardInterrupt:
             print('stopping ...')
@@ -215,13 +217,13 @@ class PorcupineDemo(Thread):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--keywords', help='comma-separated list of default keywords (%s)' % ', '.join(KEYWORDS))
+    parser.add_argument('--keywords', help='comma-separated list of default keywords (%s)' % ', '.join(sorted(KEYWORDS)))
 
-    parser.add_argument('--keyword_file_paths', help='comma-separated absolute paths to keyword files')
+    parser.add_argument('--keyword_paths', help='comma-separated absolute paths to keyword files')
 
     parser.add_argument('--library_path', help="absolute path to Porcupine's dynamic library", default=LIBRARY_PATH)
 
-    parser.add_argument('--model_file_path', help='absolute path to model parameter file', default=MODEL_FILE_PATH)
+    parser.add_argument('--model_path', help='absolute path to model parameter file', default=MODEL_PATH)
 
     parser.add_argument('--sensitivities', help='detection sensitivity [0, 1]', default=0.5)
 
@@ -238,29 +240,29 @@ def main():
     if args.show_audio_devices_info:
         PorcupineDemo.show_audio_devices_info()
     else:
-        if args.keyword_file_paths is None:
+        if args.keyword_paths is None:
             if args.keywords is None:
                 raise ValueError('either --keywords or --keyword_file_paths must be set')
 
             keywords = [x.strip() for x in args.keywords.split(',')]
 
             if all(x in KEYWORDS for x in keywords):
-                keyword_file_paths = [KEYWORD_FILE_PATHS[x] for x in keywords]
+                keyword_paths = [KEYWORD_PATHS[x] for x in keywords]
             else:
                 raise ValueError(
                     'selected keywords are not available by default. available keywords are: %s' % ', '.join(KEYWORDS))
         else:
-            keyword_file_paths = [x.strip() for x in args.keyword_file_paths.split(',')]
+            keyword_paths = [x.strip() for x in args.keyword_paths.split(',')]
 
         if isinstance(args.sensitivities, float):
-            sensitivities = [args.sensitivities] * len(keyword_file_paths)
+            sensitivities = [args.sensitivities] * len(keyword_paths)
         else:
             sensitivities = [float(x) for x in args.sensitivities.split(',')]
 
         PorcupineDemo(
             library_path=args.library_path,
-            model_file_path=args.model_file_path,
-            keyword_file_paths=keyword_file_paths,
+            model_path=args.model_path,
+            keyword_paths=keyword_paths,
             sensitivities=sensitivities,
             output_path=args.output_path,
             input_device_index=args.input_audio_device_index).run()
